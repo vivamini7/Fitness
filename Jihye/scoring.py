@@ -3,10 +3,15 @@ import mediapipe as mp
 import numpy as np
 import math
 
+# ==================== 모델 관련 임포트====================
+
 # MediaPipe 설정
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 mp_pose = mp.solutions.pose
+
+# ==================== 모델 로딩 (주석 처리) ====================
+# 학습된 모델 파일 로딩
 
 # 각도 계산 함수
 def calculate_angle(a, b, c):
@@ -51,6 +56,27 @@ max_ang_hip = 0
 
 # 사용자 설정
 target_reps = 10         # 목표 횟수 (사용자가 설정)
+
+# ==================== 랜드마크 전처리 함수 (모델용, 주석 처리) ====================
+
+# def preprocess_landmarks_for_model(landmarks):
+#     """MediaPipe 랜드마크를 모델 입력용으로 전처리"""
+#     landmark_array = []
+#     for landmark in landmarks:
+#         landmark_array.extend([landmark.x, landmark.y, landmark.z, landmark.visibility])
+#     return np.array(landmark_array).reshape(1, -1)  # (1, 132) shape: 33 landmarks * 4 features
+#
+# def normalize_landmarks(landmark_array):
+#     """랜드마크 정규화 (필요시)"""
+#     # 예: hip을 기준으로 정규화
+#     hip_x = landmark_array[0, 92]  # LEFT_HIP x coordinate
+#     hip_y = landmark_array[0, 93]  # LEFT_HIP y coordinate
+#     
+#     for i in range(0, 132, 4):  # x, y 좌표만 정규화
+#         landmark_array[0, i] -= hip_x      # x 정규화
+#         landmark_array[0, i+1] -= hip_y    # y 정규화
+#     
+#     return landmark_array
 
 # ==================== 체크포인트 계산 함수들 ====================
 
@@ -188,6 +214,7 @@ def analyze_squat_pose(landmarks, stage):
     
     # DOWN 상태일 때만 점수 계산
     if stage == "DOWN":
+        # ==================== 규칙 기반 점수 계산 (현재 방식) ====================
         scores = {
             'trunk': score_trunk_angle(trunk_angle),
             'hip': score_hip_angle(hip_angle),
@@ -198,6 +225,25 @@ def analyze_squat_pose(landmarks, stage):
         
         total_score = sum(scores.values()) / len(scores)
         feedback = get_feedback_text(total_score)  # 피드백 생성 (화면 표시용)
+
+        # ==================== 모델 기반 점수 계산 (주석 처리) ====================
+        # # 랜드마크 전처리
+        # landmark_input = preprocess_landmarks_for_model(landmarks)
+        # landmark_input = normalize_landmarks(landmark_input)  # 필요시 정규화
+        # 
+        # # 모델 예측
+        # model_scores = trained_model.predict(landmark_input)[0]  # (5,) shape 예상
+        # 
+        # scores = {
+        #     'trunk': float(model_scores[0]),
+        #     'hip': float(model_scores[1]),
+        #     'knee': float(model_scores[2]),
+        #     'knee_over_toe': float(model_scores[3]),
+        #     'knee_valgus': float(model_scores[4])
+        # }
+        # 
+        # total_score = np.mean(model_scores)
+        # feedback = get_feedback_text(total_score)
         
         return {
             'scores': scores,
@@ -307,6 +353,21 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                     # DOWN 상태: 피드백 저장 및 점수 수집
                     current_feedback = analysis['feedback']
                     current_rep_scores.append(analysis['total_score'])
+
+                # ==================== 모델 기반 분석 (주석 처리) ====================
+                # # 모델을 사용한 실시간 분석 (선택적)
+                # if stage == "DOWN":
+                #     # 랜드마크 전처리
+                #     landmark_input = preprocess_landmarks_for_model(landmarks)
+                #     landmark_input = normalize_landmarks(landmark_input)
+                #     
+                #     # 실시간 모델 예측
+                #     real_time_scores = trained_model.predict(landmark_input)[0]
+                #     real_time_total = np.mean(real_time_scores)
+                #     
+                #     # 실시간 피드백 (옵션)
+                #     current_feedback = get_feedback_text(real_time_total)
+                #     current_rep_scores.append(real_time_total)
                         
         except Exception as e:
             print(f"분석 오류: {e}")
@@ -348,6 +409,22 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             cv2.putText(image, f"{final_score:.1f}/100", 
                         (15, 290), 
                         cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
+
+        # ==================== 모델 기반 추가 정보 표시 (주석 처리) ====================
+        # # 모델의 각 체크포인트별 점수 표시 (옵션)
+        # if analysis and 'scores' in analysis and stage == "DOWN":
+        #     y_start = 350
+        #     checkpoint_names = ['Trunk', 'Hip', 'Knee', 'K-over-T', 'K-Valgus']
+        #     for i, (name, score) in enumerate(zip(checkpoint_names, analysis['scores'].values())):
+        #         color = (0, 255, 0) if score >= 90 else (0, 255, 255) if score >= 60 else (0, 0, 255)
+        #         cv2.putText(image, f"{name}: {score:.1f}", 
+        #                    (15, y_start + i*25), 
+        #                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+        
+        # # 모델 신뢰도 표시 (모델이 confidence를 제공하는 경우)
+        # # confidence = trained_model.predict_proba(landmark_input)[0].max()
+        # # cv2.putText(image, f"Confidence: {confidence:.2f}", 
+        # #            (450, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         # 포즈 랜드마크 그리기
         if results.pose_landmarks:
