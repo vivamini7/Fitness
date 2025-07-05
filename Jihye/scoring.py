@@ -8,21 +8,6 @@ mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 mp_pose = mp.solutions.pose
 
-# 각도 계산 함수
-def calculate_angle(a, b, c):
-    """세 점으로 각도 계산"""
-    a = np.array(a)  # First
-    b = np.array(b)  # Mid
-    c = np.array(c)  # End
-    
-    radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
-    angle = np.abs(radians*180.0/np.pi)
-    
-    if angle > 180.0:
-        angle = 360-angle
-        
-    return angle
-
 # 웹캠 설정
 cap = cv2.VideoCapture(0)
 
@@ -54,28 +39,59 @@ target_reps = 10         # 목표 횟수 (사용자가 설정)
 
 # ==================== 체크포인트 계산 함수들 ====================
 
+#Base: 각도 계산 함수
+def calculate_angle(a, b, c):
+    """세 점으로 각도 계산"""
+    a = np.array(a)  # First
+    b = np.array(b)  # Mid
+    c = np.array(c)  # End
+    
+    radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
+    angle = np.abs(radians*180.0/np.pi)
+    
+    if angle > 180.0:
+        angle = 360-angle
+        
+    return angle
+
+#Point1: Trunk Angle (상체 각도)
 def calculate_trunk_angle(shoulder, hip):
-    """상체 기울기 각도 계산"""
+    """어깨-엉덩이 선분의 기울기기"""
     dx = shoulder[0] - hip[0]
     dy = shoulder[1] - hip[1]
     angle = math.degrees(math.atan2(dx, dy))
     return abs(angle)
 
+#Point2: Hip Angle (엉덩이 각도)
+def caclulate_hip_angle(shoulder, hip, knee):
+    hip_angle = 180 - calculate_angle(shoulder, hip, knee)
+    return hip_angle
+
+#Point3: Knee Angle (무릎 각도)
+def caclulate_knee_angle(hip, knee, ankle):
+    knee_angle = 180 - calculate_angle(hip, knee, ankle)
+    return knee_angle
+
+#Point4: Anterior Knee-over-toe Translation (무릎-발가락 전방 이동)
 def calculate_knee_over_toe_distance(knee, ankle):
-    """무릎-발가락 전방 이동 거리 계산"""
+    """무릎-발가락 x좌표의 차이"""
     return knee[0] - ankle[0]
 
-def calculate_knee_valgus_distance(left_knee, right_knee):
-    """양쪽 무릎 사이 거리 계산"""
-    distance = math.sqrt((left_knee[0] - right_knee[0])**2 + 
+#Point5: Knee Valgus (무릎 안쪽 기울어짐)
+def calculate_knee_valgus_ratio(left_knee, right_knee, left_ankle, right_ankle):
+    
+    knee_distance = math.sqrt((left_knee[0] - right_knee[0])**2 + 
                         (left_knee[1] - right_knee[1])**2)
-    return distance
-
-def calculate_ankle_distance(left_ankle, right_ankle):
-    """양쪽 발목 사이 거리 계산"""
-    distance = math.sqrt((left_ankle[0] - right_ankle[0])**2 + 
+    ankle_distance = math.sqrt((left_ankle[0] - right_ankle[0])**2 + 
                         (left_ankle[1] - right_ankle[1])**2)
-    return distance
+
+    if ankle_distance == 0:  # 발목 거리가 0인 경우 예외 처리
+            return 50
+    
+    # 무릎 거리 / 발목 거리 비율 계산
+    ratio = knee_distance / ankle_distance
+
+    return ratio
 
 # ==================== 점수 계산 함수들 (임시 기준) ====================
 
@@ -123,20 +139,14 @@ def score_knee_over_toe(knee_over_toe_distance):
     else:
         return 0
 
-def score_knee_valgus(knee_distance, ankle_distance):
+def score_knee_valgus(knee_valgus_ratio):
     """무릎 벌어짐 점수 (무릎 거리가 발목 거리보다 좁지 않아야 함)"""
-    if ankle_distance == 0:  # 발목 거리가 0인 경우 예외 처리
-        return 50
-    
-    # 무릎 거리 / 발목 거리 비율 계산
-    ratio = knee_distance / ankle_distance
-    
-    if ratio >= 1.0:  # 무릎이 발목보다 넓거나 같으면 완벽
+    if knee_valgus_ratio >= 1.0:  # 무릎이 발목보다 넓거나 같으면 완벽
         return 100
-    elif ratio >= 0.9:  # 약간 좁은 경우 (90% 이상)
-        return 100 - (1.0 - ratio) * 500  # 90-100% 범위에서 점진적 감소
-    elif ratio >= 0.8:  # 더 좁은 경우 (80-90%)
-        return 50 - (0.9 - ratio) * 300   # 더 큰 점수 감소
+    elif knee_valgus_ratio >= 0.9:  # 약간 좁은 경우 (90% 이상)
+        return 100 - (1.0 - knee_valgus_ratio) * 500  # 90-100% 범위에서 점진적 감소
+    elif knee_valgus_ratio >= 0.8:  # 더 좁은 경우 (80-90%)
+        return 50 - (0.9 - knee_valgus_ratio) * 300   # 더 큰 점수 감소
     else:  # 매우 좁은 경우 (80% 미만)
         return 0
     
@@ -157,35 +167,24 @@ def get_feedback_text(total_score):
 def analyze_squat_pose(landmarks, stage):
     """스쿼트 자세 분석 및 점수 계산"""
     
-    # 랜드마크 추출 (왼쪽 기준)
+    # 랜드마크 추출
     shoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,
                 landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
     hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
            landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
-    knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
+    left_knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
             landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
-    ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
+    left_ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
              landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
-    
-    # 오른쪽 관절도 추출 (Knee Valgus 계산용)
     right_knee = [landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].x,
                   landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].y]
     right_ankle = [landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x,
                    landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y]
     
-    # 기본 각도 계산
-    angle_knee_raw = calculate_angle(hip, knee, ankle)
-    angle_hip_raw = calculate_angle(shoulder, hip, knee)
-    
-    knee_angle = 180 - angle_knee_raw
-    hip_angle = 180 - angle_hip_raw
-    
     # 체크포인트 값 계산
     trunk_angle = calculate_trunk_angle(shoulder, hip)
-    knee_over_toe_distance = calculate_knee_over_toe_distance(knee, ankle)
-    knee_distance = calculate_knee_valgus_distance(knee, right_knee)
-    ankle_distance = calculate_ankle_distance(ankle, right_ankle)
-    
+    knee_over_toe_distance = calculate_knee_over_toe_distance(left_knee, left_ankle)
+    knee_valgus_ratio = calculate_knee_valgus_ratio(left_knee, right_knee, left_ankle, right_ankle)
     # DOWN 상태일 때만 점수 계산
     if stage == "DOWN":
         scores = {
@@ -193,7 +192,7 @@ def analyze_squat_pose(landmarks, stage):
             'hip': score_hip_angle(hip_angle),
             'knee': score_knee_angle(knee_angle),
             'knee_over_toe': score_knee_over_toe(knee_over_toe_distance),
-            'knee_valgus': score_knee_valgus(knee_distance, ankle_distance)
+            'knee_valgus': score_knee_valgus(knee_valgus_ratio)
         }
         
         total_score = sum(scores.values()) / len(scores)
@@ -208,8 +207,7 @@ def analyze_squat_pose(landmarks, stage):
                 'hip': hip_angle,
                 'knee': knee_angle,
                 'knee_over_toe': knee_over_toe_distance,
-                'knee_distance': knee_distance,
-                'ankle_distance': ankle_distance
+                'knee_valgus' : knee_valgus_ratio
             }
         }
     
@@ -220,8 +218,7 @@ def analyze_squat_pose(landmarks, stage):
             'hip': hip_angle,
             'knee': knee_angle,
             'knee_over_toe': knee_over_toe_distance,
-            'knee_distance': knee_distance,
-            'ankle_distance': ankle_distance
+            'knee_valgus' : knee_valgus_ratio
         }
     }
 # ==================== 메인 웹캠 루프 ====================
@@ -254,12 +251,12 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                 # 기본 각도 계산 (상태 판정용)
                 hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
                        landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
-                knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
+                left_knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
                         landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
-                ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
+                left_ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
                          landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
                 
-                angle_knee_raw = calculate_angle(hip, knee, ankle)
+                angle_knee_raw = calculate_angle(hip, left_knee, left_ankle)
                 knee_angle = 180 - angle_knee_raw
                 
                 # 각도 추적 배열에 저장
