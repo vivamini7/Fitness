@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import math
+import time
 
 # MediaPipe 설정
 mp_drawing = mp.solutions.drawing_utils
@@ -14,25 +15,24 @@ cap = cv2.VideoCapture(0)
 # 스쿼트 카운터 변수들
 counter = 0
 stage = None
+final_score = None
 
-# 각도 추적 배열 (각 회차별 각도 저장)
-angle_min = []           # 각 회차 동안의 무릎 각도들
-angle_min_hip = []       # 각 회차 동안의 엉덩이 각도들
-trunk_angles = []        # 각 회차 동안의 상체 각도들
-knee_over_toe_values = []  # 각 회차 동안의 무릎-발가락 거리들
-knee_distances = []      # 각 회차 동안의 무릎 간 거리들
-ankle_distances = []     # 각 회차 동안의 발목 간 거리들
+# 안정화 감지용 변수들
+angle_history = []           # 최근 각도 기록 (시간, 각도) 튜플 리스트
+stability_threshold = 2.0    # 각도 변화 임계값 (도/초)
+stability_duration = 1.0     # 안정화 판정 시간 (초)
+is_stable = False           # 안정화 상태 플래그
+
+# 카운트다운 및 측정용 변수들
+countdown_active = False    # 카운트다운 진행 중 플래그
+countdown_start_time = None # 카운트다운 시작 시간
+measurement_delay = 2.0     # 실제 측정까지 시간 (초)
+measurement_triggered = False # 측정 완료 플래그
+score_saved = False         # 점수 저장 완료 플래그
 
 # 점수 추적 변수들
 rep_scores = []          # 각 회차별 점수 저장
-current_rep_scores = []  # 현재 회차의 점수들 (DOWN 상태 동안)
 current_feedback = None  # 현재 회차의 피드백 (화면 표시용, 저장하지 않음)
-
-# 최소/최대 각도 저장 (각 회차별)
-min_ang = 0
-max_ang = 0
-min_ang_hip = 0
-max_ang_hip = 0
 
 # 사용자 설정
 target_reps = 10         # 목표 횟수 (사용자가 설정)
@@ -63,12 +63,12 @@ def calculate_trunk_angle(shoulder, hip):
     return abs(angle)
 
 #Point2: Hip Angle (엉덩이 각도)
-def caclulate_hip_angle(shoulder, hip, knee):
+def calculate_hip_angle(shoulder, hip, knee):
     hip_angle = 180 - calculate_angle(shoulder, hip, knee)
     return hip_angle
 
 #Point3: Knee Angle (무릎 각도)
-def caclulate_knee_angle(hip, knee, ankle):
+def calculate_knee_angle(hip, knee, ankle):
     knee_angle = 180 - calculate_angle(hip, knee, ankle)
     return knee_angle
 
@@ -77,21 +77,50 @@ def calculate_knee_over_toe_distance(knee, ankle):
     """무릎-발가락 x좌표의 차이"""
     return knee[0] - ankle[0]
 
-#Point5: Knee Valgus (무릎 안쪽 기울어짐)
+#Point5: Knee Valgus
 def calculate_knee_valgus_ratio(left_knee, right_knee, left_ankle, right_ankle):
-    
+    """무릎 안쪽 기울어짐 비율 계산"""
     knee_distance = math.sqrt((left_knee[0] - right_knee[0])**2 + 
                         (left_knee[1] - right_knee[1])**2)
     ankle_distance = math.sqrt((left_ankle[0] - right_ankle[0])**2 + 
                         (left_ankle[1] - right_ankle[1])**2)
 
     if ankle_distance == 0:  # 발목 거리가 0인 경우 예외 처리
-            return 50
+            return 0.5
     
     # 무릎 거리 / 발목 거리 비율 계산
     ratio = knee_distance / ankle_distance
-
     return ratio
+
+# ==================== 점수 측정 타이밍 계산 함수 ======================
+def check_angle_stability(angle_history, threshold, duration):
+    '''무릎 각도 변화율이 임계값 이하로 지정 시간동안 유지되는지 확인'''
+
+    if len(angle_history) < 2:
+        return False
+    
+    current_time = angle_history[-1][0]
+    
+    # duration 시간 내의 각도 기록만 필터링
+    recent_angles = [
+        (t, angle) for t, angle in angle_history 
+        if current_time - t <= duration
+    ]
+    
+    if len(recent_angles) < 2:
+        return False
+    
+    # 각도 변화율 계산
+    max_change_rate = 0
+    for i in range(1, len(recent_angles)):
+        time_diff = recent_angles[i][0] - recent_angles[i-1][0]
+        if time_diff > 0:
+            angle_diff = abs(recent_angles[i][1] - recent_angles[i-1][1])
+            change_rate = angle_diff / time_diff
+            max_change_rate = max(max_change_rate, change_rate)
+    
+    return max_change_rate <= threshold
+
 
 # ==================== 점수 계산 함수들 (임시 기준) ====================
 
@@ -154,7 +183,7 @@ def score_knee_valgus(knee_valgus_ratio):
 # ==================== 피드백 함수 ====================
 
 def get_feedback_text(total_score):
-    """전체 점수에 따른 피드백 텍스트 (각 회차 DOWN시마다 생성)"""
+    """전체 점수에 따른 피드백 텍스트"""
     if total_score >= 90:
         return "Perfect"
     elif total_score >= 60:
@@ -164,10 +193,12 @@ def get_feedback_text(total_score):
 
 # ==================== 메인 분석 함수 ====================
 
-def analyze_squat_pose(landmarks, stage):
+def analyze_squat_pose(landmarks, stage, measurement_triggered):
     """스쿼트 자세 분석 및 점수 계산"""
     
     # 랜드마크 추출
+    '''양쪽 모두 있는 것은 왼쪽을 기본으로 함'''
+
     shoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,
                 landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
     hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
@@ -183,10 +214,13 @@ def analyze_squat_pose(landmarks, stage):
     
     # 체크포인트 값 계산
     trunk_angle = calculate_trunk_angle(shoulder, hip)
+    hip_angle = calculate_hip_angle(shoulder, hip, left_knee)
+    knee_angle = calculate_knee_angle(hip, left_knee, left_ankle)
     knee_over_toe_distance = calculate_knee_over_toe_distance(left_knee, left_ankle)
     knee_valgus_ratio = calculate_knee_valgus_ratio(left_knee, right_knee, left_ankle, right_ankle)
-    # DOWN 상태일 때만 점수 계산
-    if stage == "DOWN":
+
+    #점수 계산
+    if stage == "DOWN" and measurement_triggered:
         scores = {
             'trunk': score_trunk_angle(trunk_angle),
             'hip': score_hip_angle(hip_angle),
@@ -196,7 +230,7 @@ def analyze_squat_pose(landmarks, stage):
         }
         
         total_score = sum(scores.values()) / len(scores)
-        feedback = get_feedback_text(total_score)  # 피드백 생성 (화면 표시용)
+        feedback = get_feedback_text(total_score)
         
         return {
             'scores': scores,
@@ -211,7 +245,7 @@ def analyze_squat_pose(landmarks, stage):
             }
         }
     
-    # UP 상태일 때는 각도 정보만 반환
+    # 점수 계산하지 않을 때는 각도 정보만 반환
     return {
         'angles': {
             'trunk': trunk_angle,
@@ -221,6 +255,38 @@ def analyze_squat_pose(landmarks, stage):
             'knee_valgus' : knee_valgus_ratio
         }
     }
+
+# ============================== 초기화 함수 ==============================
+def reset_rep_variables():
+    """회차별 변수 초기화"""
+    global angle_history, is_stable, countdown_active, measurement_triggered, score_saved
+    angle_history = []
+    is_stable = False
+    countdown_active = False
+    measurement_triggered = False
+    score_saved = False
+
+def reset_all_variables():
+    """전체 변수 초기화 (재시작용)"""
+    global counter, stage, rep_scores, current_feedback, final_score
+    counter = 0
+    stage = None
+    rep_scores = []
+    current_feedback = None
+    final_score = None
+    reset_rep_variables()
+
+def check_set_completion():
+    """1세트 완료 확인 및 처리"""
+    global final_score
+    if counter == target_reps and len(rep_scores) == target_reps:
+        final_score = sum(rep_scores) / len(rep_scores)
+        print(f"\n=== 1세트 완료! ===")
+        print(f"최종 점수: {final_score:.1f}")
+        print("'r' 키를 눌러 재시작하거나 'q' 키로 종료하세요.")
+        return True
+    return False
+
 # ==================== 메인 웹캠 루프 ====================
 
 # MediaPipe 포즈 감지 시작
@@ -256,54 +322,62 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                 left_ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
                          landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
                 
+                current_time = time.time()
                 angle_knee_raw = calculate_angle(hip, left_knee, left_ankle)
                 knee_angle = 180 - angle_knee_raw
-                
-                # 각도 추적 배열에 저장
-                angle_min.append(angle_knee_raw)
-                
+                                
                 # 이전 상태 저장
                 prev_stage = stage
                 
                 # 상태 판정 (참고 코드와 동일한 로직)
                 if knee_angle > 169:
                     stage = "UP"
+                    if prev_stage == "DOWN" and score_saved:
+                        print(f"스쿼트 {counter}회 완료!")
+                        check_set_completion()
+                    reset_rep_variables()
+
                 if knee_angle <= 90 and stage == 'UP':
                     stage = "DOWN"
                     counter += 1
-                    
-                    # 1회 완료 처리
-                    print(f"스쿼트 {counter}회 완료!")
-                    
-                    # 해당 회차의 최소 각도 계산 (참고 코드 방식)
-                    min_ang = min(angle_min)
-                    max_ang = max(angle_min)
-                    print(f"무릎 각도 범위: {min_ang:.1f}° ~ {max_ang:.1f}°")
-                    
-                    # 현재 회차의 평균 점수 계산 및 저장
-                    if current_rep_scores:
-                        rep_score = sum(current_rep_scores) / len(current_rep_scores)
-                        rep_scores.append(rep_score)
-                        print(f"이번 회차 점수: {rep_score:.1f}")
-                        current_rep_scores = []  # 다음 회차를 위해 초기화
-                    
-                    # 각도 배열 초기화 (다음 회차 준비)
-                    angle_min = []
-                    
-                    # 1세트 완료 확인
-                    if counter == target_reps:
-                        final_score = sum(rep_scores) / len(rep_scores)
-                        print(f"\n=== 1세트 완료! ===")
-                        print(f"최종 점수: {final_score:.1f}")
-                        print("'r' 키를 눌러 재시작하거나 'q' 키로 종료하세요.")
+                    print(f"스쿼트 {counter}회 시작!")
+                    reset_rep_variables()
                 
-                # 자세 분석 (DOWN 상태일 때만)
-                analysis = analyze_squat_pose(landmarks, stage)
+                # DOWN 상태에서 안정화 감지 및 측정 처리
+                if stage == "DOWN":
+                    angle_history.append((current_time, knee_angle))
+                    
+                    # 오래된 기록 제거 (5초 이상)
+                    angle_history = [(t, a) for t, a in angle_history if current_time - t <= 5.0]
+                    
+                    # 안정화 체크
+                    if not is_stable and not countdown_active:
+                        if check_angle_stability(angle_history, stability_threshold, stability_duration):
+                            is_stable = True
+                            countdown_active = True
+                            countdown_start_time = current_time
+                            print("자세가 안정화됨! 측정 준비 중...")
+                    
+                    # 카운트다운 및 측정 처리
+                    if countdown_active and not measurement_triggered:
+                        elapsed = current_time - countdown_start_time
+                        
+                        # 2초 후 실제 측정
+                        if elapsed >= measurement_delay:
+                            measurement_triggered = True
+                            print(f"측정 완료!")
+
+                # 자세 분석
+                analysis = analyze_squat_pose(landmarks, stage, measurement_triggered)
                 
-                if analysis and 'feedback' in analysis:
-                    # DOWN 상태: 피드백 저장 및 점수 수집
+                # 점수 저장
+                if analysis and 'total_score' in analysis and measurement_triggered and not score_saved:
+                    # 5개 체크포인트 평균 점수를 회차별 점수로 저장
+                    rep_score = analysis['total_score']
+                    rep_scores.append(rep_score)
                     current_feedback = analysis['feedback']
-                    current_rep_scores.append(analysis['total_score'])
+                    print(f"이번 회차 점수: {rep_score:.1f} - {analysis['feedback']}")
+                    score_saved = True                
                         
         except Exception as e:
             print(f"분석 오류: {e}")
@@ -329,13 +403,45 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                         (150, 60), 
                         cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
         
-        # 현재 피드백 표시 (DOWN 상태일 때만)
-        if current_feedback and stage == "DOWN":
+        # 현재 피드백 표시
+        if countdown_active and not measurement_triggered:
+            # 카운트다운 표시
+            elapsed = time.time() - countdown_start_time
+            remaining = 3.0 - elapsed
+            if remaining > 0:
+                countdown_text = str(int(remaining) + 1)  # 3, 2, 1 표시
+            else:
+                countdown_text = "측정중..."
+                        
+            cv2.putText(image, 'MEASURING', (15, 100), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA)
+            cv2.putText(image, countdown_text, 
+                        (15, 135), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3, cv2.LINE_AA)
+            
+        elif current_feedback and measurement_triggered:
+            # 측정 완료 후 피드백 표시
             cv2.putText(image, 'FEEDBACK', (15, 100), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA)
+            # 피드백에 따른 색상 설정
+            if current_feedback == "Perfect":
+                feedback_color = (0, 255, 0)  # 초록색
+            elif current_feedback == "Good":
+                feedback_color = (0, 255, 255)  # 노란색
+            else:  # "Bad"
+                feedback_color = (0, 0, 255)  # 빨간색
+
             cv2.putText(image, current_feedback, 
                         (15, 135), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, feedback_color, 3, cv2.LINE_AA)
+
+        elif stage == "DOWN" and not is_stable:
+            # 안정화 대기 중 표시
+            cv2.putText(image, 'STABILIZING', (15, 100), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA)
+            cv2.putText(image, 'Hold pose...', 
+                        (15, 135), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2, cv2.LINE_AA)
         
         # 1세트 완료 시 최종 점수 표시
         if final_score is not None:
@@ -362,16 +468,7 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
         if key == ord('q'):
             break
         elif key == ord('r') and final_score is not None:
-            # 재시작
-            counter = 0
-            stage = None
-            rep_scores = []
-            current_rep_scores = []
-            current_feedback = None
-            final_score = None
-            angle_min = []
-            min_ang = 0
-            max_ang = 0
+            reset_all_variables()
             print("\n시스템 재시작!")
 
 # 정리
