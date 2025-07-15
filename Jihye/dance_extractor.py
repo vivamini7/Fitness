@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-안무 영상에서 MediaPipe 좌표 추출 및 애니메이션 생성
-사용법: python dance_pose_extractor.py
-"""
-
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
