@@ -20,7 +20,7 @@
 1. Node.js 설치
 2. 프론트엔드 폴더로 이동:
    ```
-   cd Frontend/my
+   cd Frontend
    ```
 3. 패키지 설치:
    ```
