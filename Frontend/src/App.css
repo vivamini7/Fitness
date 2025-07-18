@@ -1,0 +1,197 @@
+/* 기본 구조 */
+.container {
+  text-align: center;
+  padding: 20px;
+  font-family: 'Segoe UI', sans-serif;
+  background: #f0f2f5;
+  min-height: 100vh;
+}
+
+.title {
+  font-size: 2.5rem;
+  margin-bottom: 30px;
+  color: #333;
+}
+
+/* 메인 영역 */
+.main-content {
+  display: flex;
+  justify-content: space-between;
+  gap: 40px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* 왼쪽 영역 */
+.left-panel {
+  flex: 2;
+}
+
+/* 시작 패널 */
+.start-panel {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.start-panel input {
+  padding: 10px;
+  font-size: 1rem;
+  width: 250px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  margin-right: 10px;
+}
+
+.start-panel button {
+  padding: 10px 20px;
+  font-size: 1rem;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.start-panel button:hover {
+  background-color: #0056b3;
+}
+
+/* 비디오 */
+.video-wrapper {
+  position: relative;
+  display: inline-block;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+/* 상태 박스 */
+.status-box {
+  margin-top: 15px;
+  background: #ffffff;
+  padding: 15px;
+  border-radius: 12px;
+  box-shadow: 0 0 10px rgba(0,0,0,0.05);
+  text-align: left;
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.status-box h3 {
+  margin-bottom: 10px;
+  font-size: 1.2rem;
+  color: #333;
+}
+
+.angles {
+  font-size: 0.95rem;
+  color: #444;
+}
+
+.angles div {
+  margin-bottom: 6px;
+}
+
+/* 점수 박스 */
+.score-box {
+  margin-top: 20px;
+  background: #e9f7ef;
+  padding: 15px;
+  border-radius: 12px;
+  border-left: 6px solid #2ecc71;
+  color: #2e7d32;
+  text-align: left;
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.score-box ul {
+  list-style: none;
+  padding-left: 0;
+  margin-top: 10px;
+}
+
+.score-box li {
+  margin-bottom: 6px;
+}
+
+/* 랭킹 박스 */
+.ranking-box {
+  flex: 1;
+  background: #ffffff;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+  min-width: 300px;
+}
+
+.ranking-box h3 {
+  font-size: 1.2rem;
+  margin-bottom: 15px;
+  color: #444;
+}
+
+.ranking-box table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.ranking-box th,
+.ranking-box td {
+  padding: 10px;
+  border-bottom: 1px solid #ddd;
+  text-align: center;
+}
+
+.ranking-box th {
+  background: #f4f6f8;
+  color: #555;
+}
+
+.ranking-box tr:nth-child(even) {
+  background: #f9f9f9;
+}
+
+.ranking-box tr:hover {
+  background: #f1f1f1;
+}
+.score-box {
+  background-color: #f0f9ff;
+  border: 1px solid #bde0fe;
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 16px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+}
+
+.score-box ul {
+  list-style-type: none;
+  padding: 0;
+  margin: 0;
+}
+
+.score-box li {
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.total-score {
+  font-size: 1.2rem;
+  margin-top: 12px;
+  font-weight: bold;
+  color: #0077b6;
+}
+
+.angle-item {
+  padding: 10px;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
