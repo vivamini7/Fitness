@@ -1,11 +1,14 @@
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel  # ✅ 추가
 import mediapipe as mp
 import numpy as np
 import cv2
 import base64
 import time
+import json
+import os
 
 app = FastAPI()
 
@@ -20,6 +23,18 @@ app.add_middleware(
 pose = mp.solutions.pose.Pose(static_image_mode=True)
 user_sessions = {}
 
+# ✅ 랭킹 파일 설정
+RANKING_FILE = "rankings.json"
+if os.path.exists(RANKING_FILE):
+    with open(RANKING_FILE, "r") as f:
+        persistent_rankings = json.load(f)
+else:
+    persistent_rankings = []
+
+def save_rankings():
+    with open(RANKING_FILE, "w") as f:
+        json.dump(persistent_rankings, f)
+
 reference_stats = {
     "trunk_angle": {"mean": 32.59},
     "hip_angle": {"mean": 110.11},
@@ -29,7 +44,17 @@ reference_stats = {
 
 def compute_score(value, mean):
     diff = abs(value - mean)
-    return max(10, 25 - diff)
+    return max(10, 25 - diff / 2)
+
+def get_cycle_label(score):
+    if score < 15:
+        return "😢 Bad"
+    elif score < 18:
+        return "🙂 Normal"
+    elif score < 22:
+        return "👍 Good"
+    else:
+        return "🏅 Perfect"
 
 def calculate_angle(a, b, c):
     a, b, c = np.array(a), np.array(b), np.array(c)
@@ -39,19 +64,17 @@ def calculate_angle(a, b, c):
     angle = np.arccos(np.clip(cos_angle, -1.0, 1.0))
     return np.degrees(angle)
 
-def draw_overlay(image, status, angle_records):
+def draw_overlay(image, status, angle_records, cycle_scores):
     cv2.putText(image, status, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
-    for i, record in enumerate(angle_records):
-        text = f"{i+1} cycle: {record['knee_angle']:.2f}°"
-        x, y = image.shape[1] - 250, 50 + i * 40
-        cv2.rectangle(image, (x-10, y-30), (x+220, y), (255, 255, 255), -1)
-        cv2.putText(image, text, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+    for i, score in enumerate(cycle_scores):
+        text = f"{i+1} cycle: {score:.1f}점 ({get_cycle_label(score)})"
+        x, y = image.shape[1] - 400, 50 + i * 40
+        cv2.rectangle(image, (x-10, y-30), (x+350, y), (255, 255, 255), -1)
+        cv2.putText(image, text, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
     return image
 
 @app.post("/analyze")
 async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
-    global user_sessions
-
     content = await image.read()
     np_img = np.frombuffer(content, np.uint8)
     img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
@@ -63,14 +86,15 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
             "state": "standing",
             "state_timer": None,
             "cycle_count": 0,
-            "angle_buffer": []
+            "angle_buffer": [],
+            "total_score": None,
+            "cycle_scores": []
         }
 
     session = user_sessions[user_id]
     current_time = time.time()
     status = "⏳ 분석 중..."
-    score_record = {}
-    total_score = None
+    cycle_score = None
 
     if results.pose_landmarks:
         lm = results.pose_landmarks.landmark
@@ -95,24 +119,27 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
     else:
         angles_this_frame = {}
 
-    if session["cycle_count"] >= 5:
+    if session["cycle_count"] >= 5 and session.get("total_score") is None:
         status = "✅ 5회 측정 완료"
-
         avg_record = {
             key: np.mean([r[key] for r in session["records"]])
             for key in session["records"][0]
         }
-
         score_record = {
             key: compute_score(avg_record[key], reference_stats[key]["mean"])
             for key in avg_record
         }
+        session["total_score"] = round(sum(score_record.values()), 2)
 
-        total_score = round(sum(score_record.values()), 2)
-        session["total_score"] = total_score
-
-        print(f"[{user_id}] 평균 측정값: {avg_record}")
-        print(f"[{user_id}] 점수: {score_record}, 총점: {total_score}")
+        existing = next((r for r in persistent_rankings if r["user_id"] == user_id), None)
+        if existing:
+            existing["total_score"] = session["total_score"]
+        else:
+            persistent_rankings.append({
+                "user_id": user_id,
+                "total_score": session["total_score"]
+            })
+        save_rankings()
 
     else:
         if session["state_timer"] is None:
@@ -144,9 +171,41 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
                         for key in session["angle_buffer"][0]
                     }
                     session["records"].append(avg)
+                    score = np.mean([
+                        compute_score(avg[k], reference_stats[k]["mean"])
+                        for k in avg
+                    ])
+                    session["cycle_scores"].append(round(score, 2))
+                    cycle_score = round(score, 2)
+
                 session["cycle_count"] += 1
+
+                # ✅ 마지막 측정이 끝났을 때 저장하도록 여기에 위치
+                if session["cycle_count"] == 5 and session.get("total_score") is None:
+                    avg_record = {
+                        key: np.mean([r[key] for r in session["records"]])
+                        for key in session["records"][0]
+                    }
+                    score_record = {
+                        key: compute_score(avg_record[key], reference_stats[key]["mean"])
+                        for key in avg_record
+                    }
+                    session["total_score"] = round(sum(score_record.values()), 2)
+
+                    existing = next((r for r in persistent_rankings if r["user_id"] == user_id), None)
+                    if existing:
+                        existing["total_score"] = session["total_score"]
+                    else:
+                        persistent_rankings.append({
+                            "user_id": user_id,
+                            "total_score": session["total_score"]
+                        })
+                    save_rankings()
+                    print("[SAVE] Final ranking saved after 5th cycle:", persistent_rankings)
+
                 session["state"] = "ascending"
                 session["state_timer"] = current_time
+
 
         elif session["state"] == "ascending":
             status = "⬆️ 올라오세요"
@@ -160,27 +219,47 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
                 session["state"] = "standing"
                 session["state_timer"] = current_time
 
-    annotated = draw_overlay(img, status, session["records"])
+    annotated = draw_overlay(img, status, session["records"], session["cycle_scores"])
     _, buffer = cv2.imencode(".jpg", annotated)
     encoded_img = base64.b64encode(buffer.tobytes()).decode('utf-8')
 
     return JSONResponse({
         "image_base64": encoded_img,
         "status": status,
-        "angles": session["records"],
-        "score_detail": score_record,
-        "total_score": total_score
+        "cycle_score": cycle_score,
+        "cycle_label": get_cycle_label(cycle_score) if cycle_score else None,
+        "total_score": session.get("total_score"),
+        "cycle_scores": session["cycle_scores"]
     })
+
 
 @app.get("/ranking")
 async def get_ranking():
-    rankings = []
-    for user_id, session in user_sessions.items():
-        if "total_score" in session and len(session["records"]) == 5:
-            rankings.append({
-                "user_id": user_id,
-                "total_score": session["total_score"]
-            })
+    sorted_rankings = sorted(persistent_rankings, key=lambda x: x["total_score"], reverse=True)
+    return JSONResponse({"ranking": sorted_rankings})
 
-    rankings.sort(key=lambda x: x["total_score"], reverse=True)
-    return JSONResponse({"ranking": rankings})
+@app.post("/ranking/reset")
+async def reset_ranking():
+    global persistent_rankings
+    persistent_rankings = []
+    save_rankings()
+    return JSONResponse({"message": "랭킹 초기화 완료"})
+
+# ✅ 새로운 엔드포인트: 수동 저장용
+class SaveRequest(BaseModel):
+    user_id: str
+    total_score: float
+
+@app.post("/ranking/save")
+async def save_score(req: SaveRequest):
+    existing = next((r for r in persistent_rankings if r["user_id"] == req.user_id), None)
+    if existing:
+        existing["total_score"] = req.total_score
+    else:
+        persistent_rankings.append({
+            "user_id": req.user_id,
+            "total_score": req.total_score
+        })
+    save_rankings()
+    print("[SAVE] Ranking saved:", persistent_rankings)
+    return JSONResponse({"message": "저장 완료"})

@@ -17,14 +17,26 @@
 .main-content {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 40px;
   max-width: 1200px;
   margin: 0 auto;
 }
 
-/* 왼쪽 영역 */
+/* 왼쪽 영역 (비디오) */
 .left-panel {
-  flex: 2;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 오른쪽 영역 (상태/점수) */
+.right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 /* 시작 패널 */
@@ -62,7 +74,6 @@
 /* 비디오 */
 .video-wrapper {
   position: relative;
-  display: inline-block;
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 4px 10px rgba(0,0,0,0.1);
@@ -70,15 +81,12 @@
 
 /* 상태 박스 */
 .status-box {
-  margin-top: 15px;
   background: #ffffff;
   padding: 15px;
   border-radius: 12px;
   box-shadow: 0 0 10px rgba(0,0,0,0.05);
   text-align: left;
-  max-width: 640px;
-  margin-left: auto;
-  margin-right: auto;
+  width: 100%;
 }
 
 .status-box h3 {
@@ -98,31 +106,44 @@
 
 /* 점수 박스 */
 .score-box {
-  margin-top: 20px;
-  background: #e9f7ef;
-  padding: 15px;
+  background-color: #f0f9ff;
+  border: 1px solid #bde0fe;
   border-radius: 12px;
-  border-left: 6px solid #2ecc71;
-  color: #2e7d32;
+  padding: 16px;
+  margin-top: 16px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.05);
   text-align: left;
-  max-width: 640px;
-  margin-left: auto;
-  margin-right: auto;
+  width: 100%;
 }
 
 .score-box ul {
-  list-style: none;
-  padding-left: 0;
-  margin-top: 10px;
+  list-style-type: none;
+  padding: 0;
+  margin: 0;
 }
 
 .score-box li {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.total-score {
+  font-size: 1.2rem;
+  margin-top: 12px;
+  font-weight: bold;
+  color: #0077b6;
+}
+
+.angle-item {
+  padding: 10px;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  margin-bottom: 10px;
 }
 
 /* 랭킹 박스 */
 .ranking-box {
-  flex: 1;
   background: #ffffff;
   padding: 20px;
   border-radius: 12px;
@@ -161,37 +182,10 @@
 .ranking-box tr:hover {
   background: #f1f1f1;
 }
-.score-box {
-  background-color: #f0f9ff;
-  border: 1px solid #bde0fe;
-  border-radius: 12px;
-  padding: 16px;
-  margin-top: 16px;
-  box-shadow: 0 4px 8px rgba(0,0,0,0.05);
-}
-
-.score-box ul {
-  list-style-type: none;
-  padding: 0;
-  margin: 0;
-}
-
-.score-box li {
-  margin-bottom: 8px;
-  font-weight: 500;
-}
-
-.total-score {
-  font-size: 1.2rem;
-  margin-top: 12px;
-  font-weight: bold;
-  color: #0077b6;
-}
-
-.angle-item {
-  padding: 10px;
-  background: #f8f9fa;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  margin-bottom: 10px;
+.right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 20px;
 }
