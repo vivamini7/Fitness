@@ -1,7 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel  # ✅ 추가
+from pydantic import BaseModel
 import mediapipe as mp
 import numpy as np
 import cv2
@@ -32,8 +32,8 @@ else:
     persistent_rankings = []
 
 def save_rankings():
-    with open(RANKING_FILE, "w") as f:
-        json.dump(persistent_rankings, f)
+    with open(RANKING_FILE, "w", encoding="utf-8") as f:
+        json.dump(persistent_rankings, f, indent=2, ensure_ascii=False)
 
 reference_stats = {
     "trunk_angle": {"mean": 32.59},
@@ -42,10 +42,11 @@ reference_stats = {
     "knee_valgus_dist": {"mean": 49.13}
 }
 
-REQUIRED_LANDMARKS = [11, 23, 25, 26, 27]  # 필요한 관절 인덱스만 지정
+REQUIRED_LANDMARKS = [11, 23, 25, 26, 27]
 
 def are_required_landmarks_present(landmarks, indices):
     return all(landmarks[i].visibility > 0.5 for i in indices)
+
 def compute_score(value, mean):
     diff = abs(value - mean)
     return max(10, 20 - diff + 10)
@@ -102,7 +103,6 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
 
     if results.pose_landmarks and are_required_landmarks_present(results.pose_landmarks.landmark, REQUIRED_LANDMARKS):
         lm = results.pose_landmarks.landmark
-
         shoulder = [lm[11].x, lm[11].y]
         hip = [lm[23].x, lm[23].y]
         knee = [lm[25].x, lm[25].y]
@@ -111,7 +111,7 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
         r_knee = lm[26]
 
         trunk_angle = calculate_angle(shoulder, hip, knee)
-        hip_angle = trunk_angle  # 수정 원하면 shoulder-hip-ankle도 가능
+        hip_angle = trunk_angle
         knee_angle = calculate_angle(hip, knee, ankle)
         knee_valgus_dist = abs(l_knee.x - r_knee.x) * img.shape[1]
 
@@ -124,9 +124,8 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
     else:
         angles_this_frame = {}
 
-
-    if session["cycle_count"] >= 5 and session.get("total_score") is None:
-        status = "✅ 5회 측정 완료"
+    if session["cycle_count"] >= 3 and session.get("total_score") is None:
+        status = "✅ 3회 측정 완료"
         avg_record = {
             key: np.mean([r[key] for r in session["records"]])
             for key in session["records"][0]
@@ -186,8 +185,7 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
 
                 session["cycle_count"] += 1
 
-                # ✅ 마지막 측정이 끝났을 때 저장하도록 여기에 위치
-                if session["cycle_count"] == 5 and session.get("total_score") is None:
+                if session["cycle_count"] == 3 and session.get("total_score") is None:
                     avg_record = {
                         key: np.mean([r[key] for r in session["records"]])
                         for key in session["records"][0]
@@ -207,11 +205,9 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
                             "total_score": session["total_score"]
                         })
                     save_rankings()
-                    print("[SAVE] Final ranking saved after 5th cycle:", persistent_rankings)
 
                 session["state"] = "ascending"
                 session["state_timer"] = current_time
-
 
         elif session["state"] == "ascending":
             status = "⬆️ 올라오세요"
@@ -238,7 +234,6 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
         "cycle_scores": session["cycle_scores"]
     })
 
-
 @app.get("/ranking")
 async def get_ranking():
     sorted_rankings = sorted(persistent_rankings, key=lambda x: x["total_score"], reverse=True)
@@ -251,7 +246,6 @@ async def reset_ranking():
     save_rankings()
     return JSONResponse({"message": "랭킹 초기화 완료"})
 
-# ✅ 새로운 엔드포인트: 수동 저장용
 class SaveRequest(BaseModel):
     user_id: str
     total_score: float
@@ -267,5 +261,4 @@ async def save_score(req: SaveRequest):
             "total_score": req.total_score
         })
     save_rankings()
-    print("[SAVE] Ranking saved:", persistent_rankings)
     return JSONResponse({"message": "저장 완료"})

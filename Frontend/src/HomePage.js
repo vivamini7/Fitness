@@ -7,8 +7,13 @@ export default function HomePage() {
   const navigate = useNavigate();
 
   const selectMode = (mode) => {
-    navigate(`/app?mode=${mode}`);
+    if (mode === "hard") {
+      navigate("/hard");
+    } else {
+      navigate(`/app?mode=${mode}`);
+    }
   };
+
 
   return (
     <div className="home-container">

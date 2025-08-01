@@ -79,7 +79,7 @@ export default function App() {
         }, 2000);
       }
 
-      if ((data.cycle_scores || []).length >= 5) {
+      if ((data.cycle_scores || []).length >= 3) {  // ✅ 3회 측정 완료 조건
         setStarted(false);
         setStatus("측정 완료! 다시 시작하려면 이름을 바꾸세요.");
 
@@ -216,14 +216,16 @@ export default function App() {
         <div className="right-panel">
           <div className="status-box">
             <h3>{status}</h3>
+
             {latestCycleScore && (
               <div className="cycle-feedback">
                 최근 측정 점수: <strong>{latestCycleScore}점</strong> - {latestLabel}
               </div>
             )}
+
             {cycleScores.length > 0 && (
               <div className="score-list">
-                <h4>측정 결과</h4>
+                <h4>측정 결과 ({cycleScores.length} / 3)</h4> {/* ✅ 회차 표시 */}
                 {cycleScores.map((score, idx) => (
                   <div key={idx}>✅ Cycle {idx + 1}: {score.toFixed(1)}점</div>
                 ))}
