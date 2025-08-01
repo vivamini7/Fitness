@@ -20,13 +20,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pose = mp.solutions.pose.Pose(static_image_mode=True)
+pose = mp.solutions.pose.Pose(static_image_mode=False)
 user_sessions = {}
 
-# ✅ 랭킹 파일 설정
 RANKING_FILE = "rankings.json"
 if os.path.exists(RANKING_FILE):
-    with open(RANKING_FILE, "r") as f:
+    with open(RANKING_FILE, "r", encoding="utf-8") as f:
         persistent_rankings = json.load(f)
 else:
     persistent_rankings = []
@@ -49,14 +48,14 @@ def are_required_landmarks_present(landmarks, indices):
 
 def compute_score(value, mean):
     diff = abs(value - mean)
-    return max(10, 20 - diff + 10)
+    return max(20, 41 - diff * 0.3)  # 더 높은 점수를 주도록 수정
 
 def get_cycle_label(score):
-    if score < 13:
+    if score < 25:
         return "😢 Bad"
-    elif score < 15:
+    elif score < 27:
         return "🙂 Normal"
-    elif score < 18:
+    elif score < 30:
         return "👍 Good"
     else:
         return "🏅 Perfect"
@@ -70,12 +69,13 @@ def calculate_angle(a, b, c):
     return np.degrees(angle)
 
 def draw_overlay(image, status, angle_records, cycle_scores):
+    h, w = image.shape[:2]
     cv2.putText(image, status, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
     for i, score in enumerate(cycle_scores):
         text = f"{i+1} cycle: {score:.1f}점 ({get_cycle_label(score)})"
-        x, y = image.shape[1] - 400, 50 + i * 40
-        cv2.rectangle(image, (x-10, y-30), (x+350, y), (255, 255, 255), -1)
-        cv2.putText(image, text, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        x, y = int(w * 0.55), 50 + i * 40
+        cv2.rectangle(image, (x - 10, y - 30), (x + 320, y), (255, 255, 255), -1)
+        cv2.putText(image, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
     return image
 
 @app.post("/analyze")
@@ -100,6 +100,7 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
     current_time = time.time()
     status = "⏳ 분석 중..."
     cycle_score = None
+    cycle_label = None
 
     if results.pose_landmarks and are_required_landmarks_present(results.pose_landmarks.landmark, REQUIRED_LANDMARKS):
         lm = results.pose_landmarks.landmark
@@ -124,17 +125,13 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
     else:
         angles_this_frame = {}
 
-    if session["cycle_count"] >= 3 and session.get("total_score") is None:
-        status = "✅ 3회 측정 완료"
-        avg_record = {
-            key: np.mean([r[key] for r in session["records"]])
-            for key in session["records"][0]
-        }
-        score_record = {
-            key: compute_score(avg_record[key], reference_stats[key]["mean"])
-            for key in avg_record
-        }
-        session["total_score"] = round(sum(score_record.values()), 2)
+    if session["state_timer"] is None:
+        session["state_timer"] = current_time
+
+    elapsed = current_time - session["state_timer"]
+
+    if session["cycle_count"] >= 3 and session["total_score"] is None:
+        session["total_score"] = round(sum(session["cycle_scores"]), 2)
 
         existing = next((r for r in persistent_rankings if r["user_id"] == user_id), None)
         if existing:
@@ -145,13 +142,9 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
                 "total_score": session["total_score"]
             })
         save_rankings()
+        status = "✅ 3회 측정 완료"
 
     else:
-        if session["state_timer"] is None:
-            session["state_timer"] = current_time
-
-        elapsed = current_time - session["state_timer"]
-
         if session["state"] == "standing":
             status = "🧍 준비하세요"
             if elapsed >= 3:
@@ -170,7 +163,7 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
             if angles_this_frame:
                 session["angle_buffer"].append(angles_this_frame)
             if elapsed >= 2:
-                if session["angle_buffer"]:
+                if session["angle_buffer"]:  # 유효한 측정이 있는 경우에만 cycle 증가
                     avg = {
                         key: np.mean([a[key] for a in session["angle_buffer"]])
                         for key in session["angle_buffer"][0]
@@ -180,32 +173,14 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
                         compute_score(avg[k], reference_stats[k]["mean"])
                         for k in avg
                     ])
-                    session["cycle_scores"].append(round(score, 2))
                     cycle_score = round(score, 2)
-
-                session["cycle_count"] += 1
-
-                if session["cycle_count"] == 3 and session.get("total_score") is None:
-                    avg_record = {
-                        key: np.mean([r[key] for r in session["records"]])
-                        for key in session["records"][0]
-                    }
-                    score_record = {
-                        key: compute_score(avg_record[key], reference_stats[key]["mean"])
-                        for key in avg_record
-                    }
-                    session["total_score"] = round(sum(score_record.values()), 2)
-
-                    existing = next((r for r in persistent_rankings if r["user_id"] == user_id), None)
-                    if existing:
-                        existing["total_score"] = session["total_score"]
-                    else:
-                        persistent_rankings.append({
-                            "user_id": user_id,
-                            "total_score": session["total_score"]
-                        })
-                    save_rankings()
-
+                    cycle_label = get_cycle_label(cycle_score)
+                    session["cycle_scores"].append(cycle_score)
+                    session["cycle_count"] += 1  # ✅ 이곳으로 이동
+                else:
+                    # 인식 실패한 cycle이므로 cycle_count 증가하지 않음
+                    print("⚠️ 유지 중 동안 인식 실패: cycle 미계산")
+                
                 session["state"] = "ascending"
                 session["state_timer"] = current_time
 
@@ -225,14 +200,18 @@ async def analyze_pose(image: UploadFile = File(...), user_id: str = Form(...)):
     _, buffer = cv2.imencode(".jpg", annotated)
     encoded_img = base64.b64encode(buffer.tobytes()).decode('utf-8')
 
+    # 총점은 항상 최신 점수 기준으로 덮어씀
+    final_score = round(sum(session["cycle_scores"]), 2)
+
     return JSONResponse({
         "image_base64": encoded_img,
         "status": status,
         "cycle_score": cycle_score,
-        "cycle_label": get_cycle_label(cycle_score) if cycle_score else None,
-        "total_score": session.get("total_score"),
+        "cycle_label": cycle_label,
+        "total_score": final_score,
         "cycle_scores": session["cycle_scores"]
     })
+
 
 @app.get("/ranking")
 async def get_ranking():
@@ -249,16 +228,19 @@ async def reset_ranking():
 class SaveRequest(BaseModel):
     user_id: str
     total_score: float
+    phone_number: str 
 
 @app.post("/ranking/save")
 async def save_score(req: SaveRequest):
     existing = next((r for r in persistent_rankings if r["user_id"] == req.user_id), None)
     if existing:
         existing["total_score"] = req.total_score
+        existing["phone_number"] = req.phone_number 
     else:
         persistent_rankings.append({
             "user_id": req.user_id,
-            "total_score": req.total_score
+            "total_score": req.total_score,
+            "phone_number": req.phone_number  
         })
     save_rankings()
     return JSONResponse({"message": "저장 완료"})

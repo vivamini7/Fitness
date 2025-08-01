@@ -1,11 +1,13 @@
+// src/App.js
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import './App.css';
 
 export default function App() {
   const videoRef = useRef(null);
   const [status, setStatus] = useState("대기 중...");
   const [userId, setUserId] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("010-");
   const [started, setStarted] = useState(false);
   const [cycleScores, setCycleScores] = useState([]);
   const [totalScore, setTotalScore] = useState(null);
@@ -16,9 +18,6 @@ export default function App() {
   const [overlayColor, setOverlayColor] = useState(null);
   const [motionStatus, setMotionStatus] = useState(null);
   const navigate = useNavigate();
-  const location = useLocation();
-  const queryParams = new URLSearchParams(location.search);
-  const mode = queryParams.get("mode") || "easy";
 
   const getColorByLabel = (label) => {
     if (!label) return "gray";
@@ -56,14 +55,11 @@ export default function App() {
       setStatus(data.status || "⏳ 분석 중...");
       setCycleScores(data.cycle_scores || []);
       setTotalScore(data.total_score ?? null);
-      setLatestCycleScore(data.cycle_score || null);
-      setLatestLabel(data.cycle_label || null);
 
-      if (
-        data.cycle_score &&
-        data.cycle_label &&
-        data.status?.includes("유지 중")
-      ) {
+      if (data.cycle_score && data.cycle_label) {
+        setLatestCycleScore(data.cycle_score);
+        setLatestLabel(data.cycle_label);
+
         setOverlayLabel(data.cycle_label);
         setOverlayColor(getColorByLabel(data.cycle_label));
         setTimeout(() => {
@@ -79,7 +75,7 @@ export default function App() {
         }, 2000);
       }
 
-      if ((data.cycle_scores || []).length >= 3) {  // ✅ 3회 측정 완료 조건
+      if ((data.cycle_scores || []).length >= 3) {
         setStarted(false);
         setStatus("측정 완료! 다시 시작하려면 이름을 바꾸세요.");
 
@@ -87,7 +83,7 @@ export default function App() {
           await fetch("http://localhost:8000/ranking/save", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: userId, total_score: data.total_score }),
+            body: JSON.stringify({ user_id: userId, total_score: data.total_score, phone_number: phoneNumber }),
           });
         }
 
@@ -100,7 +96,7 @@ export default function App() {
     } finally {
       setIsSending(false);
     }
-  }, [userId, isSending, navigate]);
+  }, [userId, phoneNumber, isSending, navigate]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -138,7 +134,6 @@ export default function App() {
     <div className="container">
       <h1 className="title">🏋️‍♂️ 스쿼트 자세 분석기</h1>
       <div className="main-content">
-        {/* 왼쪽: 카메라 */}
         <div className="left-panel">
           {!started && (
             <div className="start-panel">
@@ -147,6 +142,14 @@ export default function App() {
                 value={userId}
                 placeholder="사용자 이름을 입력하세요"
                 onChange={(e) => setUserId(e.target.value)}
+              />
+              <input
+                type="tel"
+                value={phoneNumber}
+                placeholder="010-0000-0000"
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                pattern="010-[0-9]{4}-[0-9]{4}"
+                maxLength={13}
               />
               <button onClick={handleStart}>측정 시작</button>
             </div>
@@ -212,7 +215,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* 오른쪽: 상태 및 점수 */}
         <div className="right-panel">
           <div className="status-box">
             <h3>{status}</h3>
@@ -225,7 +227,7 @@ export default function App() {
 
             {cycleScores.length > 0 && (
               <div className="score-list">
-                <h4>측정 결과 ({cycleScores.length} / 3)</h4> {/* ✅ 회차 표시 */}
+                <h4>측정 결과 ({cycleScores.length} / 3)</h4>
                 {cycleScores.map((score, idx) => (
                   <div key={idx}>✅ Cycle {idx + 1}: {score.toFixed(1)}점</div>
                 ))}
