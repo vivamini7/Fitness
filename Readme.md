@@ -6,10 +6,10 @@
 
 | 팀원 | GitHub                           |
 | --------- | ------------------------------------- |
-| 🐿️유지혜    | [github.com/CheonjiKim](https://github.com/jihyeyu33)       |
+| 🐿️유지혜    | [github.com/jihyeyu33](https://github.com/jihyeyu33)       |
 | 🐼윤상민    | [github.com/vivamini7](https://github.com/vivamini7) |
-| 🦭최서연    | [github.com/BETONM](https://github.com/seoyeon-eo)         |
-| 🦢한예원    | [github.com/CheonjiKim](https://github.com/LoLe05)       |
+| 🦭최서연    | [github.com/seoyeon-eo](https://github.com/seoyeon-eo)         |
+| 🦢한예원    | [github.com/LoLe05](https://github.com/LoLe05)       |
 
 ## 폴더 구조
 ```
